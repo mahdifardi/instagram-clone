@@ -1,0 +1,54 @@
+image: hub.hamdocker.ir/docker:latest
+
+services:
+  - name: hub.hamdocker.ir/docker:dind
+    alias: docker
+
+variables:
+
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+
+stages:
+  - build
+  - deploy
+
+before_script:
+  # Set up SSH key for connection
+  - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
+  - eval $(ssh-agent -s)
+  - echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+  - mkdir -p ~/.ssh
+  - chmod 700 ~/.ssh
+  - ssh-keyscan -H 37.32.6.230 >> ~/.ssh/known_hosts
+
+build:
+  stage: build
+  
+  script:
+    - echo "Building the Docker image..."
+    # Ensure Docker is available
+    - docker info
+    - docker build -t back-v1:${CI_COMMIT_SHA} .
+
+    - echo "Deploying the Docker image..."
+    # Login to Docker registry
+    - docker login -u $HAMDOCKER_USERNAME -p $HAMDOCKER_PASSWORD registry.hamdocker.ir
+    # Tag the built image for the registry
+    - docker tag back-v1:${CI_COMMIT_SHA} registry.hamdocker.ir/mrmahdifardi/back-v1:latest
+    # Push the image to the Docker registry
+    - docker push registry.hamdocker.ir/mrmahdifardi/back-v1:latest
+
+
+deploy:
+  stage: deploy
+  script:
+    - echo "Deploying the Docker image to the server..."
+    # Use SSH to run commands on the server
+    - ssh -v ubuntu@37.32.6.230 "
+      cd /home/ubuntu/back-dockerized/cgram-back &&
+      docker login -u $HAMDOCKER_USERNAME -p $HAMDOCKER_PASSWORD registry.hamdocker.ir &&
+      docker-compose down &&
+      docker-compose pull &&
+      docker-compose up -d
+      "
